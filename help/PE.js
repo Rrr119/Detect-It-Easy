@@ -198,6 +198,18 @@ PE.getImportLibraryName = function(nImport) {}
      */
 PE.getImportSection = function() {}
     /**
+     * Get the cached import table.
+     * @returns {Array} Entries with Number, Name/Library, Functions and FunctionCount,
+     * indexed by number and by library name (original case and lower case).
+     * Functions contains named imports only; FunctionCount includes all thunks.
+     * @example
+     * var kernel32 = PE.getImportTable()["kernel32.dll"];
+     * if (kernel32 && kernel32.Functions.indexOf("VirtualAlloc") !== -1) {
+     *     // ...
+     * }
+     */
+PE.getImportTable = function() {}
+    /**
      * Get the machine type.
      * @returns {UShort}
      */
@@ -266,6 +278,11 @@ PE.getNETVersion = function() {}
      */
 PE.getNumberOfImports = function() {}
     /**
+     * Get the cached total number of import thunks across all libraries.
+     * @returns {Int}
+     */
+PE.getNumberOfImportFunctions = function() {}
+    /**
      * Get the number of functions in the imported library.
      * @param {UInt} nImport - Number of the library.
      * @returns {UInt}
@@ -327,6 +344,19 @@ PE.getSectionFileOffset = function(nSectionNumber) {}
      * @returns {UInt}
      */
 PE.getSectionFileSize = function(nSectionNumber) {}
+    /**
+     * Resolve a section number, name or Section object to a section index.
+     * @param {Int|String|Object} section - Section reference.
+     * @returns {Int} Zero-based section number, or <code>-1</code>.
+     */
+PE.getSectionIndex = function(section) {}
+    /**
+     * Calculate and cache the Shannon entropy of a section.
+     * @param {Int|String|Object} section - Section number, name or Section object.
+     * @returns {Float} Entropy in bits per byte, 0 for an empty section, or
+     * <code>-1</code> for an invalid or unreadable section.
+     */
+PE.getSectionEntropy = function(section) {}
     /**
      * Get the name of a section.
      * @param {Int} nSectionNumber - Section number (from 0).
@@ -534,6 +564,42 @@ PE.isLibraryPresent = function(sLibraryName) {}
      * }
      */
 PE.isAnySignatureInSectionPresent = function(nSection, signatures) {}
+    /**
+     * Evaluate a composable signature condition.
+     * @param {String|Array|Object} condition - Condition tree using all/any/none/not.
+     * @returns {Bool}
+     * @see PE.matchSignatures
+     */
+PE.evaluateSignatureCondition = function(condition) {}
+    /**
+     * Evaluate a composable signature condition.
+     *
+     * Conditions can test byte signatures, imports, section presence, section
+     * entropy and basic section/import limits. All/any/none groups short-circuit
+     * from left to right. Empty or malformed groups return false.
+     *
+     * @param {String|Array|Object} condition - Condition tree.
+     * @returns {Bool}
+     * @example
+     * if (PE.matchSignatures({
+     *     all: [
+     *         { section: ".text", entropyMin: 7 },
+     *         { any: [
+     *             { library: "KERNEL32.dll", function: "VirtualAlloc" },
+     *             { library: "KERNEL32.dll", function: "VirtualProtect" }
+     *         ]}
+     *     ]
+     * })) {
+     *     bDetected = true;
+     * }
+     */
+PE.matchSignatures = function(condition) {}
+    /**
+     * Alias of PE.matchSignatures.
+     * @param {String|Array|Object} condition - Condition tree.
+     * @returns {Bool}
+     */
+PE.isSignatureCombinationPresent = function(condition) {}
     /**
      * Check if a signature (see {@link Binary.compare}) exists in a section.
      * @param {Int} nSection - Section number (from 0).

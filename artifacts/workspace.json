@@ -1,0 +1,17 @@
+{
+  "root": "/home/dev/feedback/uid19895",
+  "B": "/home/dev/feedback/uid19895",
+  "sha": "7ef816ee64ee36b4884da6b930a11542742affb7",
+  "wslDistro": "Ubuntu-26.04",
+  "source": {
+    "owner": "horsicq",
+    "repo": "Detect-It-Easy",
+    "sha": "7ef816ee64ee36b4884da6b930a11542742affb7"
+  },
+  "fork": {
+    "owner": "Rrr119",
+    "repo": "Detect-It-Easy",
+    "cloneUrl": "https://github.com/Rrr119/Detect-It-Easy.git"
+  },
+  "at": "2026-11-15T08:17:06.166Z"
+}

@@ -582,6 +582,7 @@ packer_ExE_Pack.2.sg#compression
 packer_FSG.2.sg#compression
 packer_Fatpack.2.sg#compression
 packer_Feokt.2.sg#compression;extra
+packer_Generic_Entropy_Import.2.sg#compression;extra
 packer_HTML_executable.1.sg#compression
 packer_JDPack.2.sg#compression
 packer_Jexepack.2.sg#compression;extra
@@ -614,6 +615,7 @@ packer_PEEP.2.sg#compression
 packer_PEPacker_levanvn.2.sg#compression
 packer_PE_File_Packer.2.sg#compression
 packer_PE_Runtime_Packer.2.sg#compression
+packer_PEzor.2.sg#compression
 packer_PKLITE.2.sg#compression
 packer_Pack_Master.2.sg#compression
 packer_Packanoid.2.sg#compression

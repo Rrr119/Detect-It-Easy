@@ -1,0 +1,18 @@
+{
+  "uid": "19895",
+  "harness": "Codex CLI",
+  "snapshotUrl": "https://github.com/Rrr119/Detect-It-Easy/commit/ed70c31e6a5e9655d1d94e717b9378ecc8019fed",
+  "harnessVersion": "codex-cli 0.167.2",
+  "operatingSystem": "Ubuntu 26.04.1 LTS",
+  "operatingSystemCell": [
+    "MacOS/Linux"
+  ],
+  "outputDirectory": "/home/dev/feedback/uid19895",
+  "wslDistro": "Ubuntu-26.04",
+  "B": {
+    "success": false,
+    "side": "B",
+    "error": "推送 19895-B 连续 2 次失败：fatal: unable to access 'https://github.com/Rrr119/Detect-It-Easy.git/': GnuTLS, handshake failed: The TLS connection was non-properly terminated.",
+    "attempts": 7
+  }
+}

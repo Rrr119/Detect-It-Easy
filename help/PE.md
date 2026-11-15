@@ -19,6 +19,7 @@ The PE class provides specialized analysis capabilities for Windows Portable Exe
 -   [Linker Information](#linker-information)
 -   [File Properties](#file-properties)
 -   [Advanced Analysis](#advanced-analysis)
+-   [Composite Signature Conditions](#composite-signature-conditions)
 -   [Real-World PE Detection Examples](#real-world-pe-detection-examples)
 
 ## File Format Detection
@@ -97,6 +98,20 @@ if (PE.isDriver()) {
 
 **`quint32 getSectionCharacteristics(quint32 nNumber)`** - Get the characteristics flags of a section.
 
+**`qint32 getSectionIndex(Int|String|Object section)`** - Resolve a section number, section name, or `Section` object to a zero-based index. Returns `-1` when no section matches.
+
+**`double getSectionEntropy(Int|String|Object section)`** - Calculate and cache the Shannon entropy of the section's raw data. The argument may be a section number, a section name such as `".text"`, or a `PE.section[...]` object. The result is in bits per byte (`0..8`); an empty section returns `0` and an invalid or unreadable section returns `-1`.
+
+`PE.section[n].getEntropy()` is the equivalent per-section convenience method. The value is cached per section, so repeated entropy checks do not re-read the file.
+
+```javascript
+var textEntropy = PE.getSectionEntropy(".text");
+
+if (textEntropy >= 7) {
+    sOptions = sOptions.append("high-entropy code");
+}
+```
+
 ### Section Lookup and Validation
 
 **`bool isAnySignatureInSectionPresent(nNumber, signatures)`** - Check whether any signature in an array matches the selected section. Inherited from [Binary](Binary.md#isanysignatureinsectionpresent); see its argument validation, return value and example. Section and overlay bounds follow `isSignatureInSectionPresent()`.
@@ -149,11 +164,24 @@ if (PE.isSectionNamePresent(".rsrc")) {
 
 **`qint32 getNumberOfImports()`** - Get the number of imported libraries.
 
+**`qint32 getNumberOfImportFunctions()`** - Get the cached total number of import thunks across all libraries.
+
 **`QString getImportLibraryName(quint32 nNumber)`** - Get the name of an imported library.
 
 **`qint32 getNumberOfImportThunks(quint32 nNumber)`** - Get the number of functions imported from a library.
 
 **`QString getImportFunctionName(quint32 nImport, quint32 nFunctionNumber)`** - Get the name of an imported function.
+
+**`Array getImportTable()`** - Get the cached import table. Each entry has `Number`, `Name`, `Library`, `Functions` and `FunctionCount`. `Functions` contains named imports; `FunctionCount` includes ordinal-only thunks. The returned array is indexed by number and also by library name in both original and lower case, so `PE.getImportTable()["kernel32.dll"]` is a direct lookup.
+
+```javascript
+var imports = PE.getImportTable();
+var kernel32 = imports["kernel32.dll"];
+
+if (kernel32 && kernel32.Functions.indexOf("VirtualAlloc") !== -1) {
+    sOptions = sOptions.append("allocates executable memory");
+}
+```
 
 ### Import Detection
 
@@ -524,6 +552,52 @@ Detailed examination of PE sections for packing detection and code analysis.
 ### Resource Extraction
 
 Access to embedded resources including version information, icons, and manifests.
+
+## Composite Signature Conditions
+
+**`bool matchSignatures(String|Array|Object condition)`** - Evaluate a tree of byte-signature, import, section-entropy and structural conditions. `isSignatureCombinationPresent()` is an alias, and `evaluateSignatureCondition()` is the same evaluator.
+
+Composite conditions do not change the byte-signature grammar. They are ordinary JavaScript objects or arrays evaluated left to right with short-circuiting. Empty groups and malformed values fail closed.
+
+### Condition Objects
+
+| Condition | Meaning |
+| --- | --- |
+| `"pattern"` | Compare the byte signature at file offset 0, equivalent to `PE.compare("pattern", 0)`. |
+| `{ signature, offset, size }` | Compare at `offset`, or search the bounded `offset..offset+size` range when `size` is present. `pattern` and `compare` are accepted aliases for `signature`. |
+| `{ signature, size }` | Search only the first `size` bytes (or the selected section) from offset 0. |
+| `{ section, signature, offset, size }` | Search only the named or numbered section. With `offset`, the range starts at the section's file offset plus `offset`. |
+| `{ section }` / `{ sectionName }` | Require the section to exist. |
+| `{ library }` | Require the imported library. |
+| `{ library, function }` | Require the imported function; `import` and `importFunction` are accepted aliases. |
+| `{ section, entropyMin, entropyMax }` | Test the cached section entropy against inclusive bounds. |
+| `{ entropy: 7.0 }` | Use `7.0` as the minimum for the section selected by `section`. |
+| `{ entropy: { section, min, max } }` | Self-contained entropy condition. |
+| `{ maxImports }`, `{ maxImportFunctions }` | Upper bounds for the import table. |
+| `{ minSections }`, `{ maxSections }` | Section-count bounds. |
+| `{ all: [...] }`, `{ any: [...] }`, `{ none: [...] }` | Every, at least one, or none of the child conditions. |
+| `{ not: condition }` | Negate one child condition. |
+
+An array is shorthand for `all`; a leading `"all"`, `"any"`, `"none"` or `"not"` selects the operator explicitly. Multiple operator keys in one object, and multiple simple predicates in the same object, are evaluated as additional required conditions.
+
+```javascript
+var bMatches = PE.matchSignatures({
+    all: [
+        { section: ".text", entropyMin: 7.0 },
+        { maxImports: 4 },
+        { any: [
+            { library: "KERNEL32.dll", function: "VirtualAlloc" },
+            { library: "KERNEL32.dll", function: "VirtualProtect" }
+        ]},
+        { none: [
+            { section: ".upx0" },
+            { section: ".upx1" }
+        ]}
+    ]
+});
+```
+
+Use this API for reviewable multi-signal gates. Keep the cheapest checks first, use named sections or bounded ranges instead of whole-file searches, and combine a positive match with an applicable antipattern.
 
 ## Real-World PE Detection Examples
 
@@ -924,10 +998,7 @@ function analyzeSections() {
 
         // Check for high entropy sections (potential packed code)
         if (rawSize > 0) {
-            var entropy = PE.calculateEntropy(
-                PE.getSectionFileOffset(i),
-                rawSize
-            );
+            var entropy = PE.getSectionEntropy(i);
 
             if (entropy > 7.5) {
                 packerIndicators.push("High entropy section: " + sectionName);

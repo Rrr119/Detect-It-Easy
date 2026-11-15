@@ -1,0 +1,86 @@
+// Detect It Easy: detection rule file
+// Author: Detect It Easy contributors
+
+// Conservative fallback for packers that do not have a dedicated signature yet.
+meta("packer", "Generic entropy-packed PE");
+
+function detect() {
+    if (PE.isNet() || PE.isSignedFile()) {
+        return result();
+    }
+
+    var nSections = PE.getNumberOfSections();
+
+    if (nSections < 2 || nSections > 12) {
+        return result();
+    }
+
+    // Keep the fallback limited to minimal import tables. Known packers are
+    // handled by their specific rules, so do not repeat their verdict here.
+    var bMinimalImportTable = PE.matchSignatures({
+        all: [
+            { maxImports: 3 },
+            { maxImportFunctions: 12 },
+            {
+                none: [
+                    { section: ".upx0" },
+                    { section: ".upx1" },
+                    { section: ".aspack" },
+                    { section: ".ASPack" },
+                    { section: ".vmp0" },
+                    { section: ".vmp1" },
+                    { section: ".themida" },
+                    { section: ".enigma1" },
+                    { section: ".MPRESS1" },
+                    { section: ".MPRESS2" },
+                    { section: ".petite" }
+                ]
+            }
+        ]
+    });
+
+    if (!bMinimalImportTable) {
+        return result();
+    }
+
+    var aImports = PE.getImportTable();
+
+    if (aImports.length === 0 && PE.getSize() < 0x4000) {
+        return result();
+    }
+
+    var nHighestEntropy = 0,
+        nHighestEntropySection = -1,
+        bWritableSection = false;
+
+    for (var i = 0; i < nSections; i++) {
+        var nFlags = PE.getSectionCharacteristics(i),
+            nSize = PE.getSectionFileSize(i);
+
+        if ((nFlags & 0x80000000) !== 0) {
+            bWritableSection = true;
+        }
+
+        if ((nFlags & 0x20000000) !== 0 && nSize >= 0x1000) {
+            var nEntropy = PE.getSectionEntropy(i);
+
+            if (nEntropy >= 7 && nEntropy > nHighestEntropy) {
+                nHighestEntropy = nEntropy;
+                nHighestEntropySection = i;
+            }
+        }
+    }
+
+    if (nHighestEntropySection === -1 || !bWritableSection) {
+        return result();
+    }
+
+    if (PE.getSectionFileSize(nHighestEntropySection) * 4 < PE.getSize()) {
+        return result();
+    }
+
+    bDetected = true;
+    sOptions = "High entropy section: " + PE.getSectionName(nHighestEntropySection);
+
+    return result();
+}

@@ -9,6 +9,7 @@ This document describes the signature pattern formats used in Detect-It-Easy for
 - [Text Matching](#text-matching)
 - [Advanced Patterns](#advanced-patterns)
 - [Searching Alternatives](#searching-alternatives)
+- [Composite Condition Signatures](#composite-condition-signatures)
 - [Examples](#examples)
 
 ## Basic Signature Format
@@ -176,6 +177,26 @@ if (PE.isNet() && PE.getNumberOfSections() > 0 &&
 Each array element is an ordinary signature. `||` is a JavaScript operator and is not part of the signature grammar; do not put `(pattern1)||(pattern2)` inside one string. The method returns a boolean, rather than the index or offset of the matching pattern. All patterns must be nonempty valid strings, otherwise the request returns `false` before searching. An empty array also returns `false`.
 
 Use [`findSignatures()`](Binary.md#findsignatures) when separate match offsets are needed. Keep cheap preconditions before either search and restrict the search to the relevant section or file range.
+
+## Composite Condition Signatures
+
+A byte signature answers one question about one bounded byte range. When a rule needs independent evidence, use [`PE.matchSignatures()`](PE.md#composite-signature-conditions) (also exposed as `PE.isSignatureCombinationPresent()` and `PE.evaluateSignatureCondition()`). It accepts ordinary JavaScript objects and combines byte signatures, imports, section entropy and structural limits:
+
+```javascript
+if (PE.matchSignatures({
+    all: [
+        { section: ".text", entropyMin: 7.0 },
+        { library: "KERNEL32.dll", function: "VirtualAlloc" },
+        { none: [{ section: ".upx0" }, { section: ".upx1" }] }
+    ]
+})) {
+    // Multiple independent indicators agree.
+}
+```
+
+The operators are `all`, `any`, `none` and `not`; a bare array means `all`, and an array may start with the operator name. Conditions are evaluated left to right with short-circuiting. Empty or malformed groups return `false`.
+
+This is composition at the script level, not new syntax inside a signature string. `&&` and `||` remain JavaScript operators; do not place them inside `compare()`, `findSignature()` or `isSignaturePresent()` patterns.
 
 ## Examples
 

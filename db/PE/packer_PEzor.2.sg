@@ -1,0 +1,80 @@
+// Detect It Easy: detection rule file
+// Author: Detect It Easy contributors
+
+// https://github.com/phra/PEzor
+meta("packer", "PEzor");
+
+function hasKernel32Function(sFunction) {
+    return PE.isLibraryFunctionPresent("KERNEL32.dll", sFunction);
+}
+
+function detect() {
+    var nSections = PE.getNumberOfSections();
+
+    if (nSections < 6 || nSections > 8 ||
+        !PE.isSectionNamePresent(".buildid") ||
+        PE.isSectionNamePresent(".rsrc") ||
+        !PE.isLibraryPresent("KERNEL32.dll")) {
+        return result();
+    }
+
+    // The wrapper allocates, writes and executes the embedded payload. The
+    // self-executing and RX variants keep at least the first two calls.
+    if (!hasKernel32Function("VirtualAllocEx") ||
+        !hasKernel32Function("WriteProcessMemory") ||
+        (!hasKernel32Function("CreateRemoteThread") &&
+            !hasKernel32Function("VirtualProtectEx") &&
+            !hasKernel32Function("VirtualProtect"))) {
+        return result();
+    }
+
+    var bWrapperLayout = PE.matchSignatures({
+        all: [
+            { section: ".text" },
+            { section: ".rdata" },
+            { section: ".data" },
+            { any: [{ section: ".pdata" }, { section: ".eh_fram" }, { section: ".eh_frame" }] },
+            { maxImports: 10 },
+            { maxImportFunctions: 64 }
+        ]
+    });
+
+    if (!bWrapperLayout) {
+        return result();
+    }
+
+    var aImports = PE.getImportTable(),
+        bCrtApiSet = false;
+
+    for (var i = 0; i < aImports.length; i++) {
+        var sLibraryName = aImports[i].Name.toLowerCase();
+
+        if (sLibraryName.indexOf("api-ms-win-crt-") === 0 ||
+            sLibraryName.indexOf("msvcr") === 0 ||
+            sLibraryName.indexOf("ucrtbase") === 0) {
+            bCrtApiSet = true;
+            break;
+        }
+    }
+
+    if (!bCrtApiSet) {
+        return result();
+    }
+
+    var nTextSection = PE.getSectionIndex(".text"),
+        nDataSection = PE.getSectionIndex(".data"),
+        nPayloadSize = Math.max(PE.getSectionFileSize(nTextSection), PE.getSectionFileSize(nDataSection));
+
+    if (nPayloadSize < 0x1000) {
+        return result();
+    }
+
+    bDetected = true;
+    sOptions = PE.is64() ? "x64" : "x86";
+
+    if (PE.getSectionEntropy(nDataSection) > 7) {
+        sOptions = sOptions.append("encrypted payload");
+    }
+
+    return result();
+}

@@ -112,6 +112,80 @@ PE.getNumberOfImportFunctions = function () {
 }
 
 
+var PE_importTable;
+
+function ImportEntry(number, name, functions, functionCount) {
+    this.Number = number;
+    this.Name = name;
+    this.Library = name;
+    this.Functions = functions;
+    this.FunctionCount = functionCount;
+
+    this.number = number;
+    this.name = name;
+    this.library = name;
+    this.functions = functions;
+    this.functionCount = functionCount;
+}
+
+
+function PE_addImportTableAlias(table, name, entry) {
+    // Do not let a hostile import name mutate Array/Object prototypes.
+    if (!name || /^\d+$/.test(name) || name === "__proto__" ||
+        name === "constructor" || name === "prototype" || name === "length") {
+        return;
+    }
+
+    table[name] = entry;
+}
+
+
+/**
+ * Get the import table as an array of libraries, each with its named functions.
+ * The result is cached and indexed both by number and by library name.
+ *
+ * @returns {Array} Entries with Number, Name/Library, Functions and FunctionCount.
+ * @example
+ * var kernel32 = PE.getImportTable()["kernel32.dll"];
+ * if (kernel32 && kernel32.Functions.indexOf("VirtualAlloc") !== -1) {
+ *     // ...
+ * }
+ */
+PE.getImportTable = function () {
+    if (PE_importTable === undefined) {
+        PE_importTable = [];
+
+        for (var n = 0; n < PE_numberOfImports; n++) {
+            var sLibraryName = PE.getImportLibraryName(n) || "",
+                nFunctionCount = PE.getNumberOfImportThunks(n),
+                aFunctions = [];
+
+            for (var k = 0; k < nFunctionCount; k++) {
+                var sFunctionName = PE.getImportFunctionName(n, k);
+
+                if (sFunctionName) {
+                    aFunctions.push(sFunctionName);
+                }
+            }
+
+            var entry = new ImportEntry(n, sLibraryName, aFunctions, nFunctionCount);
+            PE_importTable[n] = entry;
+
+            if (sLibraryName) {
+                PE_addImportTableAlias(PE_importTable, sLibraryName, entry);
+
+                var sLowerCaseName = sLibraryName.toLowerCase();
+                if (!Object.prototype.hasOwnProperty.call(PE_importTable, sLowerCaseName)) {
+                    PE_addImportTableAlias(PE_importTable, sLowerCaseName, entry);
+                }
+            }
+        }
+    }
+
+    return PE_importTable;
+}
+
+
 /**
  * Check if an imported library is present.
  * @returns {Boolean} <code>true</code> if the library is present, otherwise <code>false</code>.
@@ -494,6 +568,86 @@ PE.getSectionCharacteristics = function (nNumber) {
 }
 
 
+var PE_sectionEntropies = [];
+
+
+/**
+ * Resolve a section number, section name or Section object to a section index.
+ * @param {Number|String|Object} section - Section reference.
+ * @returns {Number} Zero-based section index, or -1 when no section matches.
+ */
+PE.getSectionIndex = function (section) {
+    if (typeof section === "number") {
+        return section >= 0 && section < PE_numberOfSections ? section : -1;
+    }
+
+    if (typeof section === "string") {
+        for (var n = 0; n < PE_numberOfSections; n++) {
+            if (PE.section[n].Name === section) {
+                return n;
+            }
+        }
+
+        return -1;
+    }
+
+    if (section && typeof section === "object") {
+        return PE.getSectionIndex(section.Number);
+    }
+
+    return -1;
+}
+
+
+/**
+ * Calculate and cache the Shannon entropy of a section's raw data.
+ * @param {Number|String|Object} section - Section number, name or Section object.
+ * @returns {Number} Entropy in bits per byte, 0 for an empty section, or -1 for
+ * an invalid section or a section without a readable file range.
+ */
+PE.getSectionEntropy = function (section) {
+    var nNumber = PE.getSectionIndex(section);
+
+    if (nNumber === -1) {
+        return -1;
+    }
+
+    if (PE_sectionEntropies[nNumber] === undefined) {
+        var nOffset = PE.section[nNumber].FileOffset,
+            nSize = PE.section[nNumber].FileSize,
+            nFileSize = PE.getSize();
+
+        if (nSize <= 0) {
+            PE_sectionEntropies[nNumber] = 0;
+        } else if (nOffset < 0 || nOffset >= nFileSize) {
+            PE_sectionEntropies[nNumber] = -1;
+        } else {
+            if (nSize > nFileSize - nOffset) {
+                nSize = nFileSize - nOffset;
+            }
+
+            if (nSize > 0) {
+                var nEntropy = PE.calculateEntropy(nOffset, nSize);
+                PE_sectionEntropies[nNumber] = typeof nEntropy === "number" && isFinite(nEntropy) ? nEntropy : -1;
+            } else {
+                PE_sectionEntropies[nNumber] = 0;
+            }
+        }
+    }
+
+    return PE_sectionEntropies[nNumber];
+}
+
+
+/**
+ * Get the entropy of this section. The result is cached by PE.getSectionEntropy.
+ * @returns {Number} Entropy in bits per byte, or -1 when the section is invalid.
+ */
+Section.prototype.getEntropy = function () {
+    return PE.getSectionEntropy(this.Number);
+}
+
+
 /**
  * Check if a section name is present.
  * @returns {Boolean} <code>true</code> if the section is present, otherwise <code>false</code>.
@@ -691,3 +845,530 @@ PE.isResourceNamePresentExp = function (sResourcePattern) {
 
     return aMatch;
 }
+
+
+var PE_MAX_SAFE_INTEGER = 9007199254740991;
+var PE_SIGNATURE_CONDITION_KEYS = [
+    "signature", "pattern", "compare", "offset", "size", "section",
+    "sectionName", "library", "import", "function", "importFunction",
+    "entropy", "entropyMin", "entropyMax", "maxImports",
+    "maxImportFunctions", "minSections", "maxSections"
+];
+
+
+function PE_isNonNegativeSafeInteger(value) {
+    return typeof value === "number" &&
+        isFinite(value) &&
+        value >= 0 &&
+        Math.floor(value) === value &&
+        value <= PE_MAX_SAFE_INTEGER;
+}
+
+
+function PE_hasOwnProperty(object, property) {
+    return Object.prototype.hasOwnProperty.call(object, property);
+}
+
+
+function PE_isArray(value) {
+    return Object.prototype.toString.call(value) === "[object Array]";
+}
+
+
+function PE_isValidSignatureCondition(condition) {
+    if (typeof condition === "string") {
+        return condition.length > 0;
+    }
+
+    if (PE_isArray(condition)) {
+        var nStart = 0,
+            sOperator = "all";
+
+        if (typeof condition[0] === "string") {
+            var sLeadingOperator = condition[0].toLowerCase();
+
+            if (sLeadingOperator === "all" || sLeadingOperator === "any" ||
+                sLeadingOperator === "none" || sLeadingOperator === "not") {
+                sOperator = sLeadingOperator;
+                nStart = 1;
+            }
+        }
+
+        var nCount = condition.length - nStart;
+
+        if (nCount === 0 || (sOperator === "not" && nCount !== 1)) {
+            return false;
+        }
+
+        for (var n = nStart; n < condition.length; n++) {
+            if (!PE_isValidSignatureCondition(condition[n])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    if (!condition || typeof condition !== "object") {
+        return false;
+    }
+
+    var bRecognized = false;
+
+    if (PE_hasOwnProperty(condition, "all")) {
+        bRecognized = true;
+        if (!PE_isValidSignatureCondition(condition.all)) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "any")) {
+        bRecognized = true;
+        if (!PE_isValidSignatureCondition(condition.any)) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "none")) {
+        bRecognized = true;
+        if (!PE_isValidSignatureCondition(condition.none)) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "not")) {
+        bRecognized = true;
+        if (!PE_isValidSignatureCondition(condition.not)) {
+            return false;
+        }
+    }
+
+    for (var n = 0; n < PE_SIGNATURE_CONDITION_KEYS.length; n++) {
+        if (PE_hasOwnProperty(condition, PE_SIGNATURE_CONDITION_KEYS[n])) {
+            bRecognized = true;
+            break;
+        }
+    }
+
+    return bRecognized;
+}
+
+
+function PE_getImportEntry(sLibraryName) {
+    if (typeof sLibraryName !== "string" || !sLibraryName) {
+        return null;
+    }
+
+    var aImportTable = PE.getImportTable(),
+        sLowerCaseName = sLibraryName.toLowerCase();
+
+    for (var n = 0; n < PE_numberOfImports; n++) {
+        var entry = aImportTable[n];
+
+        if (typeof entry.Name === "string" && entry.Name.toLowerCase() === sLowerCaseName) {
+            return entry;
+        }
+    }
+
+    return null;
+}
+
+
+function PE_evaluateImportCondition(condition) {
+    var sLibraryName = PE_hasOwnProperty(condition, "library") ? condition.library : condition["import"],
+        sFunctionName = PE_hasOwnProperty(condition, "function") ? condition.function : condition.importFunction;
+
+    if (typeof sLibraryName !== "string" || !sLibraryName) {
+        return false;
+    }
+
+    var entry = PE_getImportEntry(sLibraryName);
+
+    if (!entry) {
+        return false;
+    }
+
+    if (sFunctionName === undefined) {
+        return true;
+    }
+
+    if (typeof sFunctionName !== "string" || !sFunctionName) {
+        return false;
+    }
+
+    var sLowerCaseFunction = sFunctionName.toLowerCase();
+
+    for (var n = 0; n < entry.Functions.length; n++) {
+        if (entry.Functions[n].toLowerCase() === sLowerCaseFunction) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+function PE_evaluateEntropyCondition(sSection, nMinimum, nMaximum) {
+    var nSection = PE.getSectionIndex(sSection);
+
+    if (nSection === -1) {
+        return false;
+    }
+
+    var nEntropy = PE.getSectionEntropy(nSection);
+
+    if (nEntropy < 0) {
+        return false;
+    }
+
+    if (nMinimum !== undefined) {
+        if (typeof nMinimum !== "number" || !isFinite(nMinimum) || nEntropy < nMinimum) {
+            return false;
+        }
+    }
+
+    if (nMaximum !== undefined) {
+        if (typeof nMaximum !== "number" || !isFinite(nMaximum) || nEntropy > nMaximum) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
+function PE_evaluateByteSignatureCondition(condition, sSignature) {
+    if (!sSignature) {
+        return false;
+    }
+
+    var bHasSection = PE_hasOwnProperty(condition, "section"),
+        nSection = bHasSection ? PE.getSectionIndex(condition.section) : -1;
+
+    if (bHasSection && nSection === -1) {
+        return false;
+    }
+
+    if (PE_hasOwnProperty(condition, "offset")) {
+        if (!PE_isNonNegativeSafeInteger(condition.offset)) {
+            return false;
+        }
+
+        if (PE_hasOwnProperty(condition, "size")) {
+            if (!PE_isNonNegativeSafeInteger(condition.size) || condition.size === 0) {
+                return false;
+            }
+
+            if (bHasSection) {
+                var nSectionOffset = PE.section[nSection].FileOffset,
+                    nSectionSize = PE.section[nSection].FileSize,
+                    nSearchSize = Math.min(condition.size, nSectionSize - condition.offset),
+                    nAbsoluteOffset = nSectionOffset + condition.offset;
+
+                if (condition.offset >= nSectionSize || nSearchSize <= 0 ||
+                    !PE_isNonNegativeSafeInteger(nAbsoluteOffset)) {
+                    return false;
+                }
+
+                return PE.isSignaturePresent(nAbsoluteOffset, nSearchSize, sSignature);
+            }
+
+            return PE.isSignaturePresent(condition.offset, condition.size, sSignature);
+        }
+
+        if (bHasSection) {
+            var nAbsoluteOffset = PE.section[nSection].FileOffset + condition.offset;
+
+            if (condition.offset >= PE.section[nSection].FileSize ||
+                !PE_isNonNegativeSafeInteger(nAbsoluteOffset)) {
+                return false;
+            }
+
+            return PE.compare(sSignature, nAbsoluteOffset);
+        }
+
+        return PE.compare(sSignature, condition.offset);
+    }
+
+    if (PE_hasOwnProperty(condition, "size")) {
+        if (!PE_isNonNegativeSafeInteger(condition.size) || condition.size === 0) {
+            return false;
+        }
+
+        if (bHasSection) {
+            var nSectionSearchSize = Math.min(condition.size, PE.section[nSection].FileSize);
+
+            if (nSectionSearchSize <= 0) {
+                return false;
+            }
+
+            return PE.isSignaturePresent(PE.section[nSection].FileOffset, nSectionSearchSize, sSignature);
+        }
+
+        return PE.isSignaturePresent(0, condition.size, sSignature);
+    }
+
+    if (bHasSection) {
+        return PE.isSignatureInSectionPresent(nSection, sSignature);
+    }
+
+    return PE.compare(sSignature, 0);
+}
+
+
+function PE_evaluateSignatureConditionList(aConditions, sMode) {
+    if (!PE_isArray(aConditions) || aConditions.length === 0) {
+        return false;
+    }
+
+    var nStart = 0,
+        sOperator = sMode || "all";
+
+    if (typeof aConditions[0] === "string") {
+        var sLeadingOperator = aConditions[0].toLowerCase();
+
+        if (sLeadingOperator === "all" || sLeadingOperator === "any" ||
+            sLeadingOperator === "none" || sLeadingOperator === "not") {
+            sOperator = sLeadingOperator;
+            nStart = 1;
+        }
+    }
+
+    var nCount = aConditions.length - nStart;
+
+    if (nCount === 0) {
+        return false;
+    }
+
+    for (var n = nStart; n < aConditions.length; n++) {
+        if (!PE_isValidSignatureCondition(aConditions[n])) {
+            return false;
+        }
+    }
+
+    if (sOperator === "not") {
+        return nCount === 1 && !PE_evaluateSignatureCondition(aConditions[nStart]);
+    }
+
+    if (sOperator === "any") {
+        for (var n = nStart; n < aConditions.length; n++) {
+            if (PE_evaluateSignatureCondition(aConditions[n])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    if (sOperator === "none") {
+        for (var n = nStart; n < aConditions.length; n++) {
+            if (PE_evaluateSignatureCondition(aConditions[n])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    for (var n = nStart; n < aConditions.length; n++) {
+        if (!PE_evaluateSignatureCondition(aConditions[n])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
+/**
+ * Evaluate one composable signature condition.
+ *
+ * A string is a byte signature compared at file offset 0. Objects may combine
+ * conditions with all/any/none/not, and may test byte signatures, imports,
+ * section entropy, section presence and basic section/import limits.
+ *
+ * @param {String|Array|Object} condition - Condition to evaluate.
+ * @returns {Boolean}
+ */
+function PE_evaluateSignatureCondition(condition) {
+    if (typeof condition === "string") {
+        return condition.length > 0 && PE.compare(condition, 0);
+    }
+
+    if (PE_isArray(condition)) {
+        return PE_evaluateSignatureConditionList(condition, "all");
+    }
+
+    if (!condition || typeof condition !== "object") {
+        return false;
+    }
+
+    if (!PE_isValidSignatureCondition(condition)) {
+        return false;
+    }
+
+    var bHasOperator = false;
+
+    if (PE_hasOwnProperty(condition, "all")) {
+        bHasOperator = true;
+        if (!PE_evaluateSignatureConditionList(PE_isArray(condition.all) ? condition.all : [condition.all], "all")) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "any")) {
+        bHasOperator = true;
+        if (!PE_evaluateSignatureConditionList(PE_isArray(condition.any) ? condition.any : [condition.any], "any")) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "none")) {
+        bHasOperator = true;
+        if (!PE_evaluateSignatureConditionList(PE_isArray(condition.none) ? condition.none : [condition.none], "none")) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "not")) {
+        bHasOperator = true;
+        var notCondition = condition.not;
+
+        if (PE_isArray(notCondition) || typeof notCondition === "string" ||
+            (notCondition && typeof notCondition === "object")) {
+            if (PE_evaluateSignatureCondition(notCondition)) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    var sSignature = PE_hasOwnProperty(condition, "signature") ? condition.signature :
+        PE_hasOwnProperty(condition, "pattern") ? condition.pattern :
+        PE_hasOwnProperty(condition, "compare") ? condition.compare : undefined,
+        bHasPredicate = false;
+
+    if (sSignature !== undefined) {
+        if (typeof sSignature !== "string") {
+            return false;
+        }
+
+        bHasPredicate = true;
+        if (!PE_evaluateByteSignatureCondition(condition, sSignature)) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "library") || PE_hasOwnProperty(condition, "import")) {
+        bHasPredicate = true;
+        if (!PE_evaluateImportCondition(condition)) {
+            return false;
+        }
+    }
+
+    var bHasEntropy = PE_hasOwnProperty(condition, "entropy"),
+        bHasEntropyMinimum = PE_hasOwnProperty(condition, "entropyMin"),
+        bHasEntropyMaximum = PE_hasOwnProperty(condition, "entropyMax");
+
+    if (bHasEntropy || bHasEntropyMinimum || bHasEntropyMaximum) {
+        var sSection = PE_hasOwnProperty(condition, "section") ? condition.section : undefined,
+            nMinimum = bHasEntropyMinimum ? condition.entropyMin : undefined,
+            nMaximum = bHasEntropyMaximum ? condition.entropyMax : undefined;
+
+        if (bHasEntropy) {
+            if (typeof condition.entropy === "number") {
+                nMinimum = condition.entropy;
+            } else if (condition.entropy && typeof condition.entropy === "object") {
+                sSection = PE_hasOwnProperty(condition.entropy, "section") ?
+                    condition.entropy.section : sSection;
+                nMinimum = PE_hasOwnProperty(condition.entropy, "min") ?
+                    condition.entropy.min : nMinimum;
+                nMaximum = PE_hasOwnProperty(condition.entropy, "max") ?
+                    condition.entropy.max : nMaximum;
+            } else {
+                return false;
+            }
+        }
+
+        bHasPredicate = true;
+        if (!PE_evaluateEntropyCondition(sSection, nMinimum, nMaximum)) {
+            return false;
+        }
+    }
+
+    var bHasLimit = false;
+
+    if (PE_hasOwnProperty(condition, "maxImports")) {
+        bHasLimit = true;
+        if (!PE_isNonNegativeSafeInteger(condition.maxImports) ||
+            PE.getNumberOfImports() > condition.maxImports) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "maxImportFunctions")) {
+        bHasLimit = true;
+        if (!PE_isNonNegativeSafeInteger(condition.maxImportFunctions) ||
+            PE.getNumberOfImportFunctions() > condition.maxImportFunctions) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "minSections")) {
+        bHasLimit = true;
+        if (!PE_isNonNegativeSafeInteger(condition.minSections) ||
+            PE.getNumberOfSections() < condition.minSections) {
+            return false;
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "maxSections")) {
+        bHasLimit = true;
+        if (!PE_isNonNegativeSafeInteger(condition.maxSections) ||
+            PE.getNumberOfSections() > condition.maxSections) {
+            return false;
+        }
+    }
+
+    if (bHasLimit) {
+        bHasPredicate = true;
+    }
+
+    if (PE_hasOwnProperty(condition, "section")) {
+        // section is a selector when used with a byte signature or entropy;
+        // otherwise it is a section-presence predicate.
+        if (sSignature === undefined && !bHasEntropy && !bHasEntropyMinimum && !bHasEntropyMaximum) {
+            bHasPredicate = true;
+            if (PE.getSectionIndex(condition.section) === -1) {
+                return false;
+            }
+        }
+    }
+
+    if (PE_hasOwnProperty(condition, "sectionName")) {
+        bHasPredicate = true;
+        if (!PE.isSectionNamePresent(condition.sectionName)) {
+            return false;
+        }
+    }
+
+    return bHasOperator || bHasPredicate;
+}
+
+
+PE.evaluateSignatureCondition = PE_evaluateSignatureCondition;
+
+
+/**
+ * Evaluate a composable signature condition. All/any/none groups are
+ * short-circuited from left to right; malformed or empty groups fail closed.
+ *
+ * @param {String|Array|Object} condition - Condition or condition tree.
+ * @returns {Boolean}
+ */
+PE.matchSignatures = function (condition) {
+    return PE.evaluateSignatureCondition(condition);
+}
+
+PE.isSignatureCombinationPresent = PE.matchSignatures;
